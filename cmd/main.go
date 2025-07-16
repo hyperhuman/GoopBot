@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"GoopBot/internal/bot"
 )
 
 func main() {

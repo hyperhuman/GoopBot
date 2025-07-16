@@ -5,20 +5,35 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"GoopBot/internal/bot"
 )
+
+type Cache interface {
+	// Define required methods, for example:
+	Get(key string) (interface{}, error)
+	Set(key string, value interface{}, expiration time.Duration) error
+}
 
 type TwitchFeature struct {
 	client *http.Client
 	cache  Cache
 }
 
+// Option is a function that configures a TwitchFeature.
+type Option func(*TwitchFeature)
+
 func NewTwitchFeature(opts ...Option) Feature {
-	return &TwitchFeature{
+	tf := &TwitchFeature{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 		cache: newRedisCache(),
 	}
+	for _, opt := range opts {
+		opt(tf)
+	}
+	return tf
 }
 
 func (t *TwitchFeature) Name() string { return "twitch" }
