@@ -3,9 +3,11 @@ package features
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"GoopBot/internal/bot"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -78,4 +80,42 @@ func TestFeatureManagerStartAll(t *testing.T) {
 	// Verify
 	assert.NoError(t, err)
 	mockFeature.AssertExpectations(t)
+}
+
+func NewFeatureManager() *FeatureManager {
+	return &FeatureManager{
+		features: make(map[string]Feature),
+	}
+}
+
+// RegisterFeature registers a feature with the manager.
+func (fm *FeatureManager) RegisterFeature(feature Feature) error {
+	name := feature.Name()
+	if _, exists := fm.features[name]; exists {
+		return fmt.Errorf("feature %s already registered", name)
+	}
+	if err := feature.Initialize(nil); err != nil {
+		return err
+	}
+	fm.features[name] = feature
+	return nil
+}
+
+// StartAll starts all registered features.
+func (fm *FeatureManager) StartAll(ctx context.Context) error {
+	for _, feature := range fm.features {
+		if err := feature.Start(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetFeature returns the feature by name if it exists, otherwise returns an error.
+func (fm *FeatureManager) GetFeature(name string) (Feature, error) {
+	feature, ok := fm.features[name]
+	if !ok {
+		return nil, fmt.Errorf("feature %s not found", name)
+	}
+	return feature, nil
 }

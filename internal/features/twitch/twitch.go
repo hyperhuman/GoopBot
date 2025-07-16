@@ -1,4 +1,4 @@
-// internal/features/twitch/twitch.go
+// Package twitch provides Twitch feature integration for GoopBot.
 package twitch
 
 import (
@@ -8,6 +8,8 @@ import (
 
 	"GoopBot/internal/bot"
 )
+
+type Feature = bot.Feature
 
 type Cache interface {
 	// Define required methods, for example:
@@ -28,7 +30,7 @@ func NewTwitchFeature(opts ...Option) Feature {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		cache: newRedisCache(),
+		cache: newInMemoryCache(),
 	}
 	for _, opt := range opts {
 		opt(tf)
@@ -50,5 +52,36 @@ func (t *TwitchFeature) Start(ctx context.Context) error {
 
 func (t *TwitchFeature) Stop(ctx context.Context) error {
 	// Cleanup Twitch resources
+	return nil
+}
+
+// newInMemoryCache provides a simple in-memory Cache implementation.
+func newInMemoryCache() Cache {
+	return &inMemoryCache{store: make(map[string]cacheItem)}
+}
+
+type cacheItem struct {
+	value      interface{}
+	expiration time.Time
+}
+
+type inMemoryCache struct {
+	store map[string]cacheItem
+}
+
+func (c *inMemoryCache) Get(key string) (interface{}, error) {
+	item, ok := c.store[key]
+	if !ok || (item.expiration.Before(time.Now()) && !item.expiration.IsZero()) {
+		return nil, nil
+	}
+	return item.value, nil
+}
+
+func (c *inMemoryCache) Set(key string, value interface{}, expiration time.Duration) error {
+	exp := time.Time{}
+	if expiration > 0 {
+		exp = time.Now().Add(expiration)
+	}
+	c.store[key] = cacheItem{value: value, expiration: exp}
 	return nil
 }
