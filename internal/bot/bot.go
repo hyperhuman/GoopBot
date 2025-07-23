@@ -3,13 +3,14 @@ package bot
 
 import (
 	"GoopBot/redis/redisutil"
-	"GoopBot/storage/db"
 	"context"
-	"database/sql"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"log"
 	"strings"
+
+	"github.com/redis/go-redis/v9"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -17,8 +18,15 @@ import (
 // Bot represents our Discord bot instance
 type Bot struct {
 	discord *discordgo.Session
-	dbConn  *sql.DB
+	dbConn  *gorm.DB
 	redis   *redis.Client
+}
+
+type Post struct {
+	gorm.Model
+	Title  string
+	Slug   string
+	Author discordgo.User
 }
 
 // handleReady handles the ready event when the bot connects
@@ -80,14 +88,14 @@ func NewBot(discordToken string, dbPath string, redisAddr string) (*Bot, error) 
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}
 
-	// Initialize database
-	dbConn, err := db.NewSQLiteDB(db.Config{Path: dbPath})
+	// Initialize database using GORM
+	dbConn, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	// Run migrations
-	if err := db.Migrate(dbConn); err != nil {
+	if err := dbConn.AutoMigrate(&Post{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -102,6 +110,11 @@ func NewBot(discordToken string, dbPath string, redisAddr string) (*Bot, error) 
 		return nil, fmt.Errorf("failed to initialize Redis: %w", err)
 	}
 
+	// Open Discord session
+	if err := dg.Open(); err != nil {
+		log.Fatal(err)
+	}
+
 	// Create bot instance
 	bot := &Bot{
 		discord: dg,
@@ -114,4 +127,16 @@ func NewBot(discordToken string, dbPath string, redisAddr string) (*Bot, error) 
 	dg.AddHandler(bot.handleCommands)
 
 	return bot, nil
+}
+
+// Close cleans up the bot resources
+func (b *Bot) Close() {
+	b.discord.Close()
+	b.redis.Close()
+}
+
+// Run starts the bot and blocks until it is stopped
+func (b *Bot) Run() {
+	log.Println("Bot is running!")
+	select {} // Block forever
 }
