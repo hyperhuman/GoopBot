@@ -44,7 +44,7 @@ go build
 - `!linktwitch <username>` - Link your Twitch account
 - `!unlinktwitch` - Unlink your Twitch account
 
-### 🛡️ For Admins:
+### 🛡️ For Admins & Server Owners:
 - `!setnotifications #channel` - Set live notification channel
 - `!checkstreams` - Manually check stream status
 

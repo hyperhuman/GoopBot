@@ -63,11 +63,60 @@ sudo apt-get install redis-server
 sudo systemctl start redis
 ```
 
-## Step 5: Build and Run
+## Step 5: Install C Compiler (Required for SQLite)
+
+GoopBot uses SQLite which requires CGO (C bindings). You need a C compiler installed:
+
+### Windows:
+
+**Option 1: Use the build script (Recommended)**
+```bash
+# If you have MSYS2 installed
+.\build.ps1
+```
+
+**Option 2: Install MSYS2 manually**
+```bash
+# Install MSYS2
+winget install --id=MSYS2.MSYS2
+
+# Install GCC
+C:\msys64\usr\bin\bash.exe -lc "pacman -S mingw-w64-x86_64-gcc --noconfirm"
+
+# Build with CGO
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+$env:CGO_ENABLED = 1
+go build
+```
+
+**Option 3: Install TDM-GCC**
+- Download from: https://jmeubank.github.io/tdm-gcc/
+- Install and add to PATH
+
+### macOS:
+```bash
+# Xcode Command Line Tools (if not already installed)
+xcode-select --install
+```
+
+### Linux:
+```bash
+# Ubuntu/Debian
+sudo apt-get install build-essential
+
+# CentOS/RHEL
+sudo yum groupinstall "Development Tools"
+```
+
+## Step 6: Build and Run
 
 1. Build the bot:
    ```bash
-   go build
+   # Windows (with MSYS2)
+   .\build.ps1
+   
+   # Or manually
+   go build  # (after setting up C compiler)
    ```
 
 2. Run the bot:

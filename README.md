@@ -22,10 +22,15 @@ A Discord bot that automatically notifies your server when users with the "Goop 
    # Edit .env with your credentials
    ```
 
-3. **Run**:
+3. **Build & Run**:
    ```bash
-   go build
+   # Windows (requires C compiler)
+   .\build.ps1
    ./GoopBot.exe
+   
+   # Linux/macOS
+   go build
+   ./GoopBot
    ```
 
 4. **Setup Discord**:

@@ -55,6 +55,37 @@ type NotificationChannel struct {
 	IsActive  bool   `json:"is_active"`
 }
 
+// isUserAdmin checks if a user has admin permissions (either Administrator permission or server owner)
+func (b *Bot) isUserAdmin(s *discordgo.Session, userID, channelID string) bool {
+	// Get the guild from the channel
+	channel, err := s.Channel(channelID)
+	if err != nil {
+		log.Printf("Error getting channel info: %v", err)
+		return false
+	}
+
+	// Get guild information
+	guild, err := s.Guild(channel.GuildID)
+	if err != nil {
+		log.Printf("Error getting guild info: %v", err)
+		return false
+	}
+
+	// Check if user is the server owner
+	if guild.OwnerID == userID {
+		return true
+	}
+
+	// Check if user has Administrator permission
+	permissions, err := s.UserChannelPermissions(userID, channelID)
+	if err != nil {
+		log.Printf("Error getting user permissions: %v", err)
+		return false
+	}
+
+	return permissions&discordgo.PermissionAdministrator != 0
+}
+
 // handleReady handles the ready event when the bot connects
 func (b *Bot) handleReady(s *discordgo.Session, r *discordgo.Ready) {
 	log.Printf("Logged in as %s", s.State.User.Username)
@@ -150,11 +181,10 @@ func (b *Bot) handleCommands(s *discordgo.Session, m *discordgo.MessageCreate) {
 			}
 		}
 	} else if strings.HasPrefix(m.Content, "!setnotifications ") {
-		// Check if user has admin permissions
-		permissions, err := s.UserChannelPermissions(m.Author.ID, m.ChannelID)
-		if err != nil || permissions&discordgo.PermissionAdministrator == 0 {
+		// Check if user has admin permissions (including server owner)
+		if !b.isUserAdmin(s, m.Author.ID, m.ChannelID) {
 			if _, err := s.ChannelMessageSend(m.ChannelID,
-				"❌ You need Administrator permissions to set notification channels!"); err != nil {
+				"❌ You need Administrator permissions or server ownership to set notification channels!"); err != nil {
 				log.Printf("Failed to send permission error message: %v", err)
 			}
 			return
@@ -203,11 +233,10 @@ func (b *Bot) handleCommands(s *discordgo.Session, m *discordgo.MessageCreate) {
 			log.Printf("Failed to send live streamers message: %v", err)
 		}
 	} else if strings.HasPrefix(m.Content, "!checkstreams") {
-		// Check if user has admin permissions
-		permissions, err := s.UserChannelPermissions(m.Author.ID, m.ChannelID)
-		if err != nil || permissions&discordgo.PermissionAdministrator == 0 {
+		// Check if user has admin permissions (including server owner)
+		if !b.isUserAdmin(s, m.Author.ID, m.ChannelID) {
 			if _, err := s.ChannelMessageSend(m.ChannelID,
-				"❌ You need Administrator permissions to manually check streams!"); err != nil {
+				"❌ You need Administrator permissions or server ownership to manually check streams!"); err != nil {
 				log.Printf("Failed to send permission error message: %v", err)
 			}
 			return
@@ -266,6 +295,9 @@ func NewBot(discordToken string, dbPath string, redisAddr string, twitchClientID
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}
+
+	// Set up Discord intents (required for message handling)
+	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages | discordgo.IntentsMessageContent
 
 	// Initialize database using GORM
 	dbConn, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
