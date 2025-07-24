@@ -1,0 +1,169 @@
+# GoopBot Setup Guide
+
+## Prerequisites
+
+1. **Go 1.21+** installed
+2. **Redis** server running (optional, but recommended for caching)
+3. **Discord Bot** token
+4. **Twitch API** credentials
+
+## Step 1: Get Twitch API Credentials
+
+1. Go to [Twitch Developer Console](https://dev.twitch.tv/console)
+2. Click "Register Your Application"
+3. Fill in:
+   - **Name**: GoopBot (or your preferred name)
+   - **OAuth Redirect URLs**: `http://localhost` (not used, but required)
+   - **Category**: Application Integration
+4. Click "Create"
+5. Copy your **Client ID** and **Client Secret**
+
+## Step 2: Create Discord Bot
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click "New Application"
+3. Give it a name (e.g., "GoopBot")
+4. Go to the "Bot" section
+5. Click "Add Bot"
+6. Copy the **Bot Token**
+7. Enable these intents:
+   - Server Members Intent
+   - Message Content Intent
+
+## Step 3: Configure Environment
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` with your credentials:
+   ```env
+   DISCORD_TOKEN=your_actual_discord_bot_token
+   REDIS_ADDR=localhost:6379
+   TWITCH_CLIENT_ID=your_actual_twitch_client_id
+   TWITCH_CLIENT_SECRET=your_actual_twitch_client_secret
+   ```
+
+## Step 4: Install Redis (Optional but Recommended)
+
+### Windows:
+1. Download Redis from [GitHub releases](https://github.com/tporadowski/redis/releases)
+2. Install and run `redis-server.exe`
+
+### macOS:
+```bash
+brew install redis
+brew services start redis
+```
+
+### Linux:
+```bash
+sudo apt-get install redis-server
+sudo systemctl start redis
+```
+
+## Step 5: Build and Run
+
+1. Build the bot:
+   ```bash
+   go build
+   ```
+
+2. Run the bot:
+   ```bash
+   ./GoopBot.exe  # Windows
+   # or
+   ./GoopBot      # Linux/macOS
+   ```
+
+3. (Optional) Test Twitch API integration:
+   ```bash
+   # Set environment variables first
+   export TWITCH_CLIENT_ID=your_client_id
+   export TWITCH_CLIENT_SECRET=your_client_secret
+   
+   # Build and run test utility
+   go build -o test_twitch.exe cmd/test_twitch/main.go
+   ./test_twitch.exe
+   ```
+
+## Step 6: Discord Server Setup
+
+1. **Invite the bot** to your Discord server with these permissions:
+   - Send Messages
+   - Use Slash Commands
+   - Read Message History
+   - View Channels
+   - Embed Links
+
+2. **Create the "Goop Creator" role** in your Discord server
+
+3. **Set up notification channel**:
+   ```
+   !setnotifications #live-notifications
+   ```
+
+## Step 7: Link Streamers
+
+Users with the "Goop Creator" role can link their Twitch accounts:
+```
+!linktwitch their_twitch_username
+```
+
+## Commands Reference
+
+### For Goop Creators:
+- `!linktwitch <username>` - Link your Twitch account
+- `!unlinktwitch` - Unlink your Twitch account
+
+### For Admins:
+- `!setnotifications #channel` - Set live notification channel
+- `!checkstreams` - Manually check stream status
+
+### For Everyone:
+- `!help` - Show all commands
+- `!gooplive` - Show currently live Goop Creators
+
+## How It Works
+
+1. **Every 5 minutes**, the bot checks Twitch API for all linked streamers
+2. **When someone goes live**, it sends a rich embed notification to the designated channel
+3. **Redis caching** prevents duplicate notifications
+4. **Database storage** keeps track of all streamers and their status
+
+## Troubleshooting
+
+### Bot doesn't respond:
+- Check if the bot has proper permissions
+- Verify the Discord token is correct
+- Make sure the bot is online in your server
+
+### Twitch integration not working:
+- Verify Twitch Client ID and Secret are correct
+- Check bot logs for API errors
+- Make sure streamers have linked their accounts correctly
+
+### No notifications appearing:
+- Ensure notification channel is set with `!setnotifications`
+- Check if users have the "Goop Creator" role
+- Verify their Twitch usernames are linked correctly
+
+## Logs
+
+The bot provides detailed logging:
+- Stream status checks
+- Going live notifications
+- API errors
+- Database operations
+
+Monitor the console output to debug any issues.
+
+## Production Deployment
+
+For production use:
+1. Use a proper Redis instance (not localhost)
+2. Set up proper logging to files
+3. Use environment variables for all configuration
+4. Consider using Docker for deployment
+5. Set up monitoring and health checks

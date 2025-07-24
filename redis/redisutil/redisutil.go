@@ -55,9 +55,42 @@ func SetStreamStatus(ctx context.Context, rdb *redis.Client, username string, is
 		return fmt.Errorf("failed to marshal status: %w", err)
 	}
 
-	if err := rdb.Set(ctx, username, data, 24*time.Hour).Err(); err != nil {
+	key := fmt.Sprintf("stream:%s", username)
+	if err := rdb.Set(ctx, key, data, 24*time.Hour).Err(); err != nil {
 		return fmt.Errorf("failed to cache stream status: %w", err)
 	}
 
 	return nil
+}
+
+// GetStreamStatus retrieves cached stream status
+func GetStreamStatus(ctx context.Context, rdb *redis.Client, username string) (*StreamStatus, error) {
+	key := fmt.Sprintf("stream:%s", username)
+	data, err := rdb.Get(ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil // Not found
+		}
+		return nil, fmt.Errorf("failed to get stream status: %w", err)
+	}
+
+	var status StreamStatus
+	if err := json.Unmarshal([]byte(data), &status); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal status: %w", err)
+	}
+
+	return &status, nil
+}
+
+// SetStreamCheckCooldown sets a cooldown to prevent too frequent API calls
+func SetStreamCheckCooldown(ctx context.Context, rdb *redis.Client, username string, duration time.Duration) error {
+	key := fmt.Sprintf("cooldown:%s", username)
+	return rdb.Set(ctx, key, "checked", duration).Err()
+}
+
+// IsStreamCheckOnCooldown checks if a stream check is on cooldown
+func IsStreamCheckOnCooldown(ctx context.Context, rdb *redis.Client, username string) bool {
+	key := fmt.Sprintf("cooldown:%s", username)
+	_, err := rdb.Get(ctx, key).Result()
+	return err != redis.Nil // If key exists, it's on cooldown
 }

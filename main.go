@@ -5,32 +5,26 @@ import (
 	"os"
 
 	"GoopBot/internal/bot"
-	"github.com/bwmarrin/discordgo"
-
-	"gorm.io/gorm"
 )
 
 type Config struct {
-	DiscordToken string
-	DBPath       string
-	RedisAddr    string
-}
-
-type Post struct {
-	gorm.Model
-	Title  string
-	Slug   string
-	Author discordgo.User
+	DiscordToken       string
+	DBPath             string
+	RedisAddr          string
+	TwitchClientID     string
+	TwitchClientSecret string
 }
 
 func main() {
 	config := Config{
-		DiscordToken: os.Getenv("DISCORD_TOKEN"),
-		DBPath:       "./GoopBot.db",
-		RedisAddr:    os.Getenv("REDIS_ADDR"),
+		DiscordToken:       os.Getenv("DISCORD_TOKEN"),
+		DBPath:             "./GoopBot.db",
+		RedisAddr:          os.Getenv("REDIS_ADDR"),
+		TwitchClientID:     os.Getenv("TWITCH_CLIENT_ID"),
+		TwitchClientSecret: os.Getenv("TWITCH_CLIENT_SECRET"),
 	}
 
-	bot, err := bot.NewBot(config.DiscordToken, config.DBPath, config.RedisAddr)
+	bot, err := bot.NewBot(config.DiscordToken, config.DBPath, config.RedisAddr, config.TwitchClientID, config.TwitchClientSecret)
 	if err != nil {
 		log.Fatal(err)
 	}
