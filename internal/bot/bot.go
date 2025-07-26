@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,36 @@ type NotificationChannel struct {
 	gorm.Model
 	GuildID   string `json:"guild_id"`
 	ChannelID string `gorm:"uniqueIndex" json:"channel_id"`
+	IsActive  bool   `json:"is_active"`
+}
+
+// Birthday represents a user's birthday
+type Birthday struct {
+	gorm.Model
+	DiscordID string    `gorm:"uniqueIndex" json:"discord_id"`
+	Username  string    `json:"username"`
+	GuildID   string    `json:"guild_id"`
+	Month     int       `json:"month"`     // 1-12
+	Day       int       `json:"day"`       // 1-31
+	Year      *int      `json:"year"`      // Optional birth year
+	LastSent  time.Time `json:"last_sent"` // When we last sent birthday message
+}
+
+// BirthdayChannel represents channels where birthday notifications should be sent
+type BirthdayChannel struct {
+	gorm.Model
+	GuildID   string `json:"guild_id"`
+	ChannelID string `gorm:"uniqueIndex" json:"channel_id"`
+	IsActive  bool   `json:"is_active"`
+}
+
+// RoleMessage represents messages that grant roles when reacted to
+type RoleMessage struct {
+	gorm.Model
+	GuildID   string `json:"guild_id"`
+	ChannelID string `json:"channel_id"`
+	MessageID string `gorm:"uniqueIndex" json:"message_id"`
+	RoleName  string `json:"role_name"` // The role to grant (e.g., "member")
 	IsActive  bool   `json:"is_active"`
 }
 
@@ -123,6 +154,9 @@ func (b *Bot) handleCommands(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Check if user has "Goop Creator" role
 	hasGoopCreatorRole := b.hasRole(s, m.GuildID, member.Roles, "Goop Creator")
 
+	// Check if user has "Member" role (case-sensitive)
+	hasMemberRole := b.hasRole(s, m.GuildID, member.Roles, "member")
+
 	// Handle commands using strings.HasPrefix
 	if strings.HasPrefix(m.Content, "!help") {
 		helpMessage := `
@@ -133,6 +167,18 @@ func (b *Bot) handleCommands(s *discordgo.Session, m *discordgo.MessageCreate) {
 !setnotifications <channel> - Set notification channel for live streams (Admin only)
 !gooplive - Show currently live Goop Creators
 !checkstreams - Manually check stream status (Admin only)
+!setbirthday <MM/DD> - Set your birthday (member role required)
+!setbirthdaychannel <channel> - Set birthday notification channel (Admin only)
+!birthdays - Show upcoming birthdays
+
+**Role Management Commands (Admin only):**
+!setrolemessage <message_id> [role_name] - Set a message to grant roles when reacted to (default: member)
+!removerolemessage <message_id> - Remove role-granting from a message
+!listrolemessages - List all active role-granting messages
+
+**Auto-Role Feature:**
+• React to designated messages to automatically get roles!
+• Admins can set up which messages grant roles using !setrolemessage
         `
 		if _, err := s.ChannelMessageSend(m.ChannelID, helpMessage); err != nil {
 			log.Printf("Failed to send help message: %v", err)
@@ -253,7 +299,254 @@ func (b *Bot) handleCommands(s *discordgo.Session, m *discordgo.MessageCreate) {
 				log.Printf("Failed to send completion message: %v", err)
 			}
 		}()
+	} else if strings.HasPrefix(m.Content, "!setbirthday ") {
+		// Check if user has member role
+		if !hasMemberRole {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ You need the 'member' role to set your birthday!"); err != nil {
+				log.Printf("Failed to send role error message: %v", err)
+			}
+			return
+		}
+
+		// Extract birthday from command (MM/DD format)
+		birthdayStr := strings.TrimSpace(m.Content[12:]) // 12 is length of "!setbirthday "
+		if err := b.SetUserBirthday(m.Author.ID, m.Author.Username, m.GuildID, birthdayStr); err != nil {
+			errorMsg := fmt.Sprintf("❌ Failed to set birthday: %v", err)
+			if _, err := s.ChannelMessageSend(m.ChannelID, errorMsg); err != nil {
+				log.Printf("Failed to send error message: %v", err)
+			}
+		} else {
+			if _, err := s.ChannelMessageSend(m.ChannelID, "🎂 Successfully set your birthday!"); err != nil {
+				log.Printf("Failed to send success message: %v", err)
+			}
+		}
+	} else if strings.HasPrefix(m.Content, "!setbirthdaychannel ") {
+		// Check if user has admin permissions (including server owner)
+		if !b.isUserAdmin(s, m.Author.ID, m.ChannelID) {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ You need Administrator permissions or server ownership to set birthday channels!"); err != nil {
+				log.Printf("Failed to send permission error message: %v", err)
+			}
+			return
+		}
+
+		// Extract channel mention from command
+		channelMention := strings.TrimSpace(m.Content[20:]) // 20 is length of "!setbirthdaychannel "
+		channelID := strings.Trim(channelMention, "<>#")
+
+		if channelID != "" {
+			if err := b.SetBirthdayChannel(m.GuildID, channelID); err != nil {
+				errorMsg := fmt.Sprintf("❌ Failed to set birthday channel: %v", err)
+				if _, err := s.ChannelMessageSend(m.ChannelID, errorMsg); err != nil {
+					log.Printf("Failed to send error message: %v", err)
+				}
+			} else {
+				if _, err := s.ChannelMessageSend(m.ChannelID, "🎂 Successfully set birthday notification channel!"); err != nil {
+					log.Printf("Failed to send success message: %v", err)
+				}
+			}
+		} else {
+			if _, err := s.ChannelMessageSend(m.ChannelID, "❌ Please mention a valid channel (e.g., #birthdays)"); err != nil {
+				log.Printf("Failed to send invalid channel message: %v", err)
+			}
+		}
+	} else if strings.HasPrefix(m.Content, "!birthdays") {
+		// Show upcoming birthdays (available to everyone)
+		birthdays, err := b.GetUpcomingBirthdays(m.GuildID)
+		if err != nil {
+			errorMsg := fmt.Sprintf("❌ Failed to get birthdays: %v", err)
+			if _, err := s.ChannelMessageSend(m.ChannelID, errorMsg); err != nil {
+				log.Printf("Failed to send error message: %v", err)
+			}
+			return
+		}
+
+		if len(birthdays) == 0 {
+			if _, err := s.ChannelMessageSend(m.ChannelID, "🎂 No upcoming birthdays found!"); err != nil {
+				log.Printf("Failed to send no birthdays message: %v", err)
+			}
+		} else {
+			message := "🎂 **Upcoming Birthdays:**\n"
+			for _, birthday := range birthdays {
+				message += fmt.Sprintf("• %s - %02d/%02d\n", birthday.Username, birthday.Month, birthday.Day)
+			}
+			if _, err := s.ChannelMessageSend(m.ChannelID, message); err != nil {
+				log.Printf("Failed to send birthdays message: %v", err)
+			}
+		}
+	} else if strings.HasPrefix(m.Content, "!setrolemessage ") {
+		// Check if user has admin permissions (including server owner)
+		if !b.isUserAdmin(s, m.Author.ID, m.ChannelID) {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ You need Administrator permissions or server ownership to set role messages!"); err != nil {
+				log.Printf("Failed to send permission error message: %v", err)
+			}
+			return
+		}
+
+		// Parse command: !setrolemessage <message_id> [role_name]
+		parts := strings.Fields(m.Content)
+		if len(parts) < 2 {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ Usage: !setrolemessage <message_id> [role_name]\nExample: !setrolemessage 123456789 member"); err != nil {
+				log.Printf("Failed to send usage message: %v", err)
+			}
+			return
+		}
+
+		messageID := parts[1]
+		roleName := "member" // Default role
+		if len(parts) >= 3 {
+			roleName = parts[2]
+		}
+
+		// Verify the role exists
+		if b.getRoleID(s, m.GuildID, roleName) == "" {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				fmt.Sprintf("❌ Role '%s' not found in this server!", roleName)); err != nil {
+				log.Printf("Failed to send role not found message: %v", err)
+			}
+			return
+		}
+
+		// Verify the message exists and get its channel
+		msg, err := s.ChannelMessage(m.ChannelID, messageID)
+		if err != nil {
+			// Try to find the message in other channels (this is a simplified approach)
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ Message not found! Make sure the message ID is correct and the message is in this channel."); err != nil {
+				log.Printf("Failed to send message not found: %v", err)
+			}
+			return
+		}
+
+		if err := b.SetRoleMessage(m.GuildID, msg.ChannelID, messageID, roleName); err != nil {
+			errorMsg := fmt.Sprintf("❌ Failed to set role message: %v", err)
+			if _, err := s.ChannelMessageSend(m.ChannelID, errorMsg); err != nil {
+				log.Printf("Failed to send error message: %v", err)
+			}
+		} else {
+			successMsg := fmt.Sprintf("✅ Message %s will now grant the '%s' role when reacted to!", messageID, roleName)
+			if _, err := s.ChannelMessageSend(m.ChannelID, successMsg); err != nil {
+				log.Printf("Failed to send success message: %v", err)
+			}
+		}
+	} else if strings.HasPrefix(m.Content, "!removerolemessage ") {
+		// Check if user has admin permissions (including server owner)
+		if !b.isUserAdmin(s, m.Author.ID, m.ChannelID) {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ You need Administrator permissions or server ownership to remove role messages!"); err != nil {
+				log.Printf("Failed to send permission error message: %v", err)
+			}
+			return
+		}
+
+		// Parse command: !removerolemessage <message_id>
+		parts := strings.Fields(m.Content)
+		if len(parts) < 2 {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ Usage: !removerolemessage <message_id>"); err != nil {
+				log.Printf("Failed to send usage message: %v", err)
+			}
+			return
+		}
+
+		messageID := parts[1]
+
+		if err := b.RemoveRoleMessage(messageID); err != nil {
+			errorMsg := fmt.Sprintf("❌ Failed to remove role message: %v", err)
+			if _, err := s.ChannelMessageSend(m.ChannelID, errorMsg); err != nil {
+				log.Printf("Failed to send error message: %v", err)
+			}
+		} else {
+			if _, err := s.ChannelMessageSend(m.ChannelID, "✅ Role message removed successfully!"); err != nil {
+				log.Printf("Failed to send success message: %v", err)
+			}
+		}
+	} else if strings.HasPrefix(m.Content, "!listrolemessages") {
+		// Check if user has admin permissions (including server owner)
+		if !b.isUserAdmin(s, m.Author.ID, m.ChannelID) {
+			if _, err := s.ChannelMessageSend(m.ChannelID,
+				"❌ You need Administrator permissions or server ownership to list role messages!"); err != nil {
+				log.Printf("Failed to send permission error message: %v", err)
+			}
+			return
+		}
+
+		roleMessages, err := b.GetRoleMessages(m.GuildID)
+		if err != nil {
+			errorMsg := fmt.Sprintf("❌ Failed to get role messages: %v", err)
+			if _, err := s.ChannelMessageSend(m.ChannelID, errorMsg); err != nil {
+				log.Printf("Failed to send error message: %v", err)
+			}
+			return
+		}
+
+		if len(roleMessages) == 0 {
+			if _, err := s.ChannelMessageSend(m.ChannelID, "📝 No role messages are currently set up."); err != nil {
+				log.Printf("Failed to send no role messages: %v", err)
+			}
+		} else {
+			message := "📝 **Active Role Messages:**\n"
+			for _, rm := range roleMessages {
+				message += fmt.Sprintf("• Message ID: `%s` → Role: `%s` (in <#%s>)\n", rm.MessageID, rm.RoleName, rm.ChannelID)
+			}
+			if _, err := s.ChannelMessageSend(m.ChannelID, message); err != nil {
+				log.Printf("Failed to send role messages list: %v", err)
+			}
+		}
 	}
+}
+
+// handleMessageReactionAdd handles when a user adds a reaction to a message
+func (b *Bot) handleMessageReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
+	// Ignore reactions from bots
+	if r.UserID == s.State.User.ID {
+		return
+	}
+
+	// Check if this message is designated as a role-granting message
+	var roleMessage RoleMessage
+	if err := b.dbConn.Where("message_id = ? AND is_active = ?", r.MessageID, true).First(&roleMessage).Error; err != nil {
+		// Message is not set up for role granting, ignore
+		return
+	}
+
+	// Get guild member
+	member, err := s.GuildMember(r.GuildID, r.UserID)
+	if err != nil {
+		log.Printf("Failed to get guild member for reaction: %v", err)
+		return
+	}
+
+	// Check if user already has the target role
+	if b.hasRole(s, r.GuildID, member.Roles, roleMessage.RoleName) {
+		return // User already has the role
+	}
+
+	// Get the target role ID
+	targetRoleID := b.getRoleID(s, r.GuildID, roleMessage.RoleName)
+	if targetRoleID == "" {
+		log.Printf("Could not find '%s' role in guild %s", roleMessage.RoleName, r.GuildID)
+		return
+	}
+
+	// Assign the target role to the user
+	if err := s.GuildMemberRoleAdd(r.GuildID, r.UserID, targetRoleID); err != nil {
+		log.Printf("Failed to add %s role to user %s: %v", roleMessage.RoleName, r.UserID, err)
+		return
+	}
+
+	log.Printf("Added '%s' role to user %s (%s) for reacting to message %s in guild %s", roleMessage.RoleName, member.User.Username, r.UserID, r.MessageID, r.GuildID)
+
+	// Optionally send a DM to the user (uncomment if desired)
+	/*
+		channel, err := s.UserChannelCreate(r.UserID)
+		if err == nil {
+			s.ChannelMessageSend(channel.ID, fmt.Sprintf("🎉 Welcome! You've been given the '%s' role for participating in the server!", roleMessage.RoleName))
+		}
+	*/
 }
 
 // hasRole checks if a user has a specific role
@@ -288,6 +581,25 @@ func (b *Bot) hasRole(s *discordgo.Session, guildID string, userRoles []string, 
 	return false
 }
 
+// getRoleID gets the role ID for a given role name
+func (b *Bot) getRoleID(s *discordgo.Session, guildID string, roleName string) string {
+	// Get all guild roles
+	roles, err := s.GuildRoles(guildID)
+	if err != nil {
+		log.Printf("Failed to get guild roles: %v", err)
+		return ""
+	}
+
+	// Find the role ID for the role name
+	for _, role := range roles {
+		if role.Name == roleName {
+			return role.ID
+		}
+	}
+
+	return ""
+}
+
 // NewBot creates a new bot instance
 func NewBot(discordToken string, dbPath string, redisAddr string, twitchClientID string, twitchClientSecret string) (*Bot, error) {
 	// Initialize Discord session
@@ -296,8 +608,8 @@ func NewBot(discordToken string, dbPath string, redisAddr string, twitchClientID
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}
 
-	// Set up Discord intents (required for message handling)
-	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages | discordgo.IntentsMessageContent
+	// Set up Discord intents (required for message handling and reactions)
+	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages | discordgo.IntentsMessageContent | discordgo.IntentsGuildMessageReactions
 
 	// Initialize database using GORM
 	dbConn, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
@@ -306,7 +618,7 @@ func NewBot(discordToken string, dbPath string, redisAddr string, twitchClientID
 	}
 
 	// Run migrations
-	if err := dbConn.AutoMigrate(&GoopCreator{}, &TwitchStream{}, &NotificationChannel{}); err != nil {
+	if err := dbConn.AutoMigrate(&GoopCreator{}, &TwitchStream{}, &NotificationChannel{}, &Birthday{}, &BirthdayChannel{}, &RoleMessage{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -346,6 +658,7 @@ func NewBot(discordToken string, dbPath string, redisAddr string, twitchClientID
 	// Register event handlers
 	dg.AddHandler(bot.handleReady)
 	dg.AddHandler(bot.handleCommands)
+	dg.AddHandler(bot.handleMessageReactionAdd)
 
 	return bot, nil
 }
@@ -362,6 +675,9 @@ func (b *Bot) Run() {
 
 	// Start stream monitoring every 5 minutes
 	b.StartStreamMonitoring(5 * time.Minute)
+
+	// Start birthday monitoring (daily checks)
+	b.StartBirthdayMonitoring()
 
 	// Run an initial check after 10 seconds
 	time.AfterFunc(10*time.Second, func() {
@@ -625,4 +941,168 @@ func (b *Bot) StartStreamMonitoring(interval time.Duration) {
 		}
 	}()
 	log.Printf("Started stream monitoring with %v interval", interval)
+}
+
+// Birthday-related methods
+
+// SetUserBirthday sets a user's birthday
+func (b *Bot) SetUserBirthday(discordID, username, guildID, birthdayStr string) error {
+	// Parse birthday string (MM/DD format)
+	parts := strings.Split(birthdayStr, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid birthday format, use MM/DD (e.g., 03/15)")
+	}
+
+	month, err := strconv.Atoi(parts[0])
+	if err != nil || month < 1 || month > 12 {
+		return fmt.Errorf("invalid month, must be 01-12")
+	}
+
+	day, err := strconv.Atoi(parts[1])
+	if err != nil || day < 1 || day > 31 {
+		return fmt.Errorf("invalid day, must be 01-31")
+	}
+
+	// Create or update birthday record
+	birthday := Birthday{
+		DiscordID: discordID,
+		Username:  username,
+		GuildID:   guildID,
+		Month:     month,
+		Day:       day,
+	}
+
+	// Use GORM's Upsert functionality
+	result := b.dbConn.Where("discord_id = ?", discordID).Assign(birthday).FirstOrCreate(&birthday)
+	return result.Error
+}
+
+// SetBirthdayChannel sets the birthday notification channel for a guild
+func (b *Bot) SetBirthdayChannel(guildID, channelID string) error {
+	// First, deactivate any existing birthday channels for this guild
+	if err := b.dbConn.Model(&BirthdayChannel{}).Where("guild_id = ?", guildID).Update("is_active", false).Error; err != nil {
+		return fmt.Errorf("failed to deactivate existing birthday channels: %w", err)
+	}
+
+	// Create or update the new birthday channel
+	channel := BirthdayChannel{
+		GuildID:   guildID,
+		ChannelID: channelID,
+		IsActive:  true,
+	}
+
+	result := b.dbConn.Where("channel_id = ?", channelID).Assign(channel).FirstOrCreate(&channel)
+	return result.Error
+}
+
+// GetUpcomingBirthdays gets upcoming birthdays for a guild (next 30 days)
+func (b *Bot) GetUpcomingBirthdays(guildID string) ([]Birthday, error) {
+	var birthdays []Birthday
+
+	// Get current date
+	now := time.Now()
+	currentMonth := int(now.Month())
+	currentDay := now.Day()
+
+	// Query for birthdays in current month from today onwards, or next month
+	query := b.dbConn.Where("guild_id = ?", guildID)
+
+	// This is a simplified version - for production you'd want more sophisticated date logic
+	query = query.Where("(month = ? AND day >= ?) OR (month = ?)",
+		currentMonth, currentDay, (currentMonth%12)+1)
+
+	if err := query.Order("month ASC, day ASC").Find(&birthdays).Error; err != nil {
+		return nil, fmt.Errorf("failed to get birthdays: %w", err)
+	}
+
+	return birthdays, nil
+}
+
+// CheckBirthdays checks for today's birthdays and sends notifications
+func (b *Bot) CheckBirthdays() {
+	now := time.Now()
+	currentMonth := int(now.Month())
+	currentDay := now.Day()
+
+	// Get all birthdays for today
+	var birthdays []Birthday
+	if err := b.dbConn.Where("month = ? AND day = ?", currentMonth, currentDay).Find(&birthdays).Error; err != nil {
+		log.Printf("Failed to get today's birthdays: %v", err)
+		return
+	}
+
+	for _, birthday := range birthdays {
+		// Check if we already sent a birthday message today
+		if birthday.LastSent.Format("2006-01-02") == now.Format("2006-01-02") {
+			continue
+		}
+
+		// Get birthday channel for this guild
+		var channel BirthdayChannel
+		if err := b.dbConn.Where("guild_id = ? AND is_active = ?", birthday.GuildID, true).First(&channel).Error; err != nil {
+			log.Printf("No active birthday channel found for guild %s", birthday.GuildID)
+			continue
+		}
+
+		// Send birthday message
+		message := fmt.Sprintf("🎉 **Happy Birthday** <@%s>! 🎂\nHope you have a wonderful day! 🎈", birthday.DiscordID)
+
+		if _, err := b.discord.ChannelMessageSend(channel.ChannelID, message); err != nil {
+			log.Printf("Failed to send birthday message for %s: %v", birthday.Username, err)
+			continue
+		}
+
+		// Update last sent timestamp
+		birthday.LastSent = now
+		if err := b.dbConn.Save(&birthday).Error; err != nil {
+			log.Printf("Failed to update birthday last sent for %s: %v", birthday.Username, err)
+		}
+
+		log.Printf("Sent birthday message for %s in guild %s", birthday.Username, birthday.GuildID)
+	}
+}
+
+// StartBirthdayMonitoring starts daily birthday checking
+func (b *Bot) StartBirthdayMonitoring() {
+	// Check birthdays once at startup
+	go b.CheckBirthdays()
+
+	// Then check every 24 hours at midnight
+	ticker := time.NewTicker(24 * time.Hour)
+	go func() {
+		defer ticker.Stop()
+		for range ticker.C {
+			b.CheckBirthdays()
+		}
+	}()
+	log.Println("Started birthday monitoring")
+}
+
+// Role message management methods
+
+// SetRoleMessage sets a message to grant a role when reacted to
+func (b *Bot) SetRoleMessage(guildID, channelID, messageID, roleName string) error {
+	roleMessage := RoleMessage{
+		GuildID:   guildID,
+		ChannelID: channelID,
+		MessageID: messageID,
+		RoleName:  roleName,
+		IsActive:  true,
+	}
+
+	// Use GORM's Upsert functionality to update if exists or create if doesn't
+	result := b.dbConn.Where("message_id = ?", messageID).Assign(roleMessage).FirstOrCreate(&roleMessage)
+	return result.Error
+}
+
+// RemoveRoleMessage removes role-granting functionality from a message
+func (b *Bot) RemoveRoleMessage(messageID string) error {
+	return b.dbConn.Where("message_id = ?", messageID).Delete(&RoleMessage{}).Error
+}
+
+// GetRoleMessages gets all active role messages for a guild
+func (b *Bot) GetRoleMessages(guildID string) ([]RoleMessage, error) {
+	var roleMessages []RoleMessage
+	err := b.dbConn.Where("guild_id = ? AND is_active = ?", guildID, true).Find(&roleMessages).Error
+	return roleMessages, err
 }

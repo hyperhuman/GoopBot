@@ -146,11 +146,14 @@ sudo yum groupinstall "Development Tools"
    - View Channels
    - Embed Links
 
-2. **Create the "Goop Creator" role** in your Discord server
+2. **Create the required roles** in your Discord server:
+   - **"Goop Creator"** role (for streamers)
+   - **"member"** role (for birthday feature - exact name, all lowercase)
 
-3. **Set up notification channel**:
+3. **Set up notification channels**:
    ```
    !setnotifications #live-notifications
+   !setbirthdaychannel #birthdays
    ```
 
 ## Step 7: Link Streamers
@@ -166,20 +169,26 @@ Users with the "Goop Creator" role can link their Twitch accounts:
 - `!linktwitch <username>` - Link your Twitch account
 - `!unlinktwitch` - Unlink your Twitch account
 
-### For Admins:
+### For Members:
+- `!setbirthday <MM/DD>` - Set your birthday (e.g., !setbirthday 03/15) - requires "member" role
+
+### For Admins & Server Owners:
 - `!setnotifications #channel` - Set live notification channel
+- `!setbirthdaychannel #channel` - Set birthday notification channel
 - `!checkstreams` - Manually check stream status
 
 ### For Everyone:
 - `!help` - Show all commands
 - `!gooplive` - Show currently live Goop Creators
+- `!birthdays` - Show upcoming birthdays
 
 ## How It Works
 
 1. **Every 5 minutes**, the bot checks Twitch API for all linked streamers
 2. **When someone goes live**, it sends a rich embed notification to the designated channel
-3. **Redis caching** prevents duplicate notifications
-4. **Database storage** keeps track of all streamers and their status
+3. **Daily at midnight**, the bot checks for birthdays and sends celebration messages
+4. **Redis caching** prevents duplicate notifications
+5. **Database storage** keeps track of all streamers, birthdays, and their status
 
 ## Troubleshooting
 
